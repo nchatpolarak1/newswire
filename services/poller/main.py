@@ -3,7 +3,7 @@
 Two dedup layers exist in this system and they do different jobs. This service
 owns the first: an exact-URL seen-set in Redis, which stops a story being
 republished on every cycle simply because it is still in the feed. The second
-layer -- SimHash clustering in the enricher -- catches the same story told by
+layer -- TF-IDF clustering in the enricher -- catches the same story told by
 different outlets, which URL identity cannot see.
 """
 

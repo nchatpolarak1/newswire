@@ -49,8 +49,18 @@ MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
 
 # --- Pipeline behaviour ---------------------------------------------------
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "600"))
-SIMHASH_DISTANCE_THRESHOLD = int(os.getenv("SIMHASH_DISTANCE_THRESHOLD", "3"))
-SIMHASH_BANDS = 4  # 4 x 16-bit bands over a 64-bit hash
+
+# Cosine score at or above which two articles are treated as the same story.
+# Chosen from the measured distribution over 393 real articles, not guessed:
+# >=0.50 is near-verbatim, 0.40-0.50 reads as clean same-story pairs, and
+# 0.30-0.40 still holds up (Buffett across four outlets, the Nigerian custody
+# deaths, the new cat species) with the first topical false positives appearing
+# near the bottom. 0.35 balances precision against recall; re-measure if the
+# feed set changes.
+SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.35"))
+
+# Heaviest terms per article posted to the Redis inverted index.
+INDEX_TERM_COUNT = int(os.getenv("INDEX_TERM_COUNT", "24"))
 
 # --- Enrichment -----------------------------------------------------------
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
