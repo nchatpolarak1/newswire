@@ -11,15 +11,6 @@
 
 }
 
-/*
-If you're curious about the specific styling framework we're using for this project,
- check out https://tailwindcss.com/docs/installation/using-vite
-
-There are plenty of different styling frameworks to use, and we encourage you to explore others.
- */
-
-
-/* Tech Lab Specific Styles */
 
 /* Featured News */
 .featured-news-card {
@@ -42,19 +33,12 @@ There are plenty of different styling frameworks to use, and we encourage you to
   font-size: 2rem;
   margin-bottom: 1rem;
   font-weight: bold;
-  text-align: center;
   font-family: "PT Serif", serif;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  @apply text-title text-left;
+  @apply text-title text-left line-clamp-3;
 }
 
 .featured-story-summary {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  @apply line-clamp-[8] lg:line-clamp-none text-body
+  @apply line-clamp-[8] text-body
 }
 .featured-story-author {
   @apply justify-self-end self-end place-self-end
@@ -92,19 +76,12 @@ There are plenty of different styling frameworks to use, and we encourage you to
 
 .story-title {
   font-weight: bold;
-  text-align: center;
   font-family: "PT Serif", serif;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  @apply text-title text-left text-2xl pb-2;
+  @apply text-title text-left text-2xl pb-2 line-clamp-3;
 }
 
 .story-summary {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  @apply line-clamp-[8] lg:line-clamp-none text-body
+  @apply line-clamp-4 text-body
 }
 
 .story-author {
@@ -148,15 +125,6 @@ There are plenty of different styling frameworks to use, and we encourage you to
 #nav-divider {
   @apply text-2xl
 }
-
-h2.instruction {
-  @apply text-3xl font-bold flex justify-center p-5
-}
-
-.instruction {
-  @apply text-2xl flex justify-center p-5
-}
-/* END OF TECH LAB STYLES */
 
 body {
   font-family: "Inter", sans-serif;

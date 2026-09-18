@@ -1,31 +1,29 @@
 import Link from "next/link";
+
+import ArticleImage from "@/components/ArticleImage";
 import { Article } from "@/utils/types";
+import { byline, truncate } from "@/utils/format";
 
 interface NewsCardProps {
     article: Article;
 }
 
-
 function NewsCard({ article }: NewsCardProps) {
-    // PART 2: Create a reusable news card to use with general stories
-
-    // Similar to Part 1, create a component that displays:
-    // 1. The article's image
-    // 2. The article's title,
-    // 3. A truncated version of the article's body
-
-    // This component should be reusable to populate all stories on the news page.
-
-    // Once completing this part, you should be able to see a few test articles on
-    // the right side of the screen.
-
-    // Hint: Some classes in `globals.css` could help with styling
-
     return (
         <div className="news-card">
+            <div className="news-img-div">
+                <ArticleImage
+                    src={article.image_url}
+                    alt={article.title}
+                    className="news-img w-full"
+                />
+            </div>
             <div className="news-info">
-                {/* TODO: Remove the span below and implement a reusable NewsCard */}
-                <span className='instruction'>Part 2: Build Reusable News Card</span>
+                <Link href={article.url} target="_blank" rel="noopener noreferrer">
+                    <h3 className="story-title hover:underline">{article.title}</h3>
+                </Link>
+                <p className="story-summary">{truncate(article.body, 220)}</p>
+                <span className="story-author">{byline(article.author, article.publish_date)}</span>
             </div>
         </div>
     );

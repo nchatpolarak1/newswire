@@ -4,5 +4,6 @@ export interface Article {
     body: string;
     image_url: string;
     url: string;
-    publish_date: Date;
+    /** ISO-8601 string: this crosses the wire as JSON, never as a Date. */
+    publish_date: string;
 }
