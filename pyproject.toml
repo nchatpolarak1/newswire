@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "newswire"
+version = "0.1.0"
+description = "Real-time news intelligence pipeline"
+requires-python = ">=3.12"
+dependencies = [
+    "pika",              # RabbitMQ client
+    "psycopg[binary]",   # Postgres
+    "redis",
+    "hiredis",
+    "feedparser",        # RSS parsing
+    "requests",
+    "pydantic",
+    "flask",
+    "anthropic",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "mypy",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["pipeline"]
+
+[tool.ruff]
+src = ["pipeline", "services"]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["pipeline", "services"]
+ignore_missing_imports = true
