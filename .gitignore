@@ -23,3 +23,6 @@ next-env.d.ts
 
 # Local data
 *.log
+
+# Build artifacts
+*.tsbuildinfo
