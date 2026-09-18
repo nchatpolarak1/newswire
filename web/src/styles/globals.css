@@ -77,7 +77,9 @@
 .story-title {
   font-weight: bold;
   font-family: "PT Serif", serif;
-  @apply text-title text-left text-2xl pb-2 line-clamp-3;
+  /* mb, not pb: padding on a line-clamped element extends its box, so the
+     clipped fourth line bleeds into the padding below the ellipsis. */
+  @apply text-title text-left text-2xl mb-2 line-clamp-3;
 }
 
 .story-summary {

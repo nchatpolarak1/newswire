@@ -12,12 +12,15 @@ interface NewsCardProps {
 
 function NewsCard({ story, compact }: NewsCardProps) {
     const summary = story.enrichment?.summary || story.body;
+    const hasImage = Boolean(story.image_url);
 
     return (
         <div className="news-card">
-            <div className="news-img-div">
-                <ArticleImage src={story.image_url} alt={story.title} className="news-img w-full" />
-            </div>
+            {hasImage && (
+                <div className="news-img-div">
+                    <ArticleImage src={story.image_url} alt={story.title} className="news-img w-full" />
+                </div>
+            )}
             <div className="news-info">
                 <Link href={story.url} target="_blank" rel="noopener noreferrer">
                     <h3 className="story-title hover:underline">{story.title}</h3>

@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 interface ArticleImageProps {
     src: string;
     alt: string;
@@ -6,27 +8,23 @@ interface ArticleImageProps {
 
 /**
  * Article images come from arbitrary outlets, so a missing or broken URL is
- * normal rather than exceptional. Renders a neutral placeholder instead of a
- * broken-image icon. Plain <img> on purpose: next/image would need every
- * outlet's hostname in remotePatterns up front, which the poller cannot know.
+ * normal rather than exceptional.
+ *
+ * Renders nothing at all in that case, rather than an empty placeholder: the
+ * card's image column previously used `md:h-max`, which is height: max-content
+ * and therefore zero for an empty div, so a story with no art left half the
+ * featured card blank. Callers check for an image and drop the column instead.
+ *
+ * Plain <img> on purpose: next/image would need every outlet's hostname in
+ * remotePatterns up front, which the poller cannot know.
  */
 export default function ArticleImage({ src, alt, className }: ArticleImageProps) {
-    if (!src) {
-        return <div className={`${className} bg-slate-200`} aria-hidden />;
-    }
+    const [failed, setFailed] = useState(false);
+
+    if (!src || failed) return null;
 
     return (
         // eslint-disable-next-line @next/next/no-img-element
-        <img
-            src={src}
-            alt={alt}
-            className={className}
-            loading="lazy"
-            onError={(event) => {
-                const img = event.currentTarget;
-                img.style.display = "none";
-                img.parentElement?.classList.add("bg-slate-200");
-            }}
-        />
+        <img src={src} alt={alt} className={className} loading="lazy" onError={() => setFailed(true)} />
     );
 }
