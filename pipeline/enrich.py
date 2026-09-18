@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
@@ -33,18 +34,46 @@ class Entity(BaseModel):
     sentiment: Sentiment = "neutral"
 
 
-class Enrichment(BaseModel):
-    """Structured extraction for one article.
+class Extraction(BaseModel):
+    """What an enricher derives from an article.
 
-    Doubles as the schema handed to the model in step 14, so the shape the
-    fallback produces and the shape Claude is asked for cannot drift apart.
+    This is the exact schema handed to the model as a structured output, so the
+    field descriptions below are prompt surface, not just documentation. It
+    deliberately excludes provenance: the model is never asked for metadata it
+    cannot know.
     """
 
-    summary: str = Field(default="", max_length=600, description="Two sentences, plain prose.")
-    topics: list[str] = Field(default_factory=list, max_length=4)
-    entities: list[Entity] = Field(default_factory=list, max_length=12)
-    tickers: list[str] = Field(default_factory=list, max_length=8)
-    importance: int = Field(default=3, ge=1, le=5, description="1 routine, 5 major.")
+    summary: str = Field(
+        default="",
+        max_length=600,
+        description="Two sentences of plain prose describing what happened. No preamble.",
+    )
+    topics: list[str] = Field(
+        default_factory=list,
+        max_length=4,
+        description="Up to four lowercase topic labels, most relevant first.",
+    )
+    entities: list[Entity] = Field(
+        default_factory=list,
+        max_length=12,
+        description="People, organisations and places the article is actually about.",
+    )
+    tickers: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description="Stock tickers only where the company is confidently identifiable.",
+    )
+    importance: int = Field(
+        default=3,
+        ge=1,
+        le=5,
+        description="1 routine, 3 notable, 5 major news of the day.",
+    )
+
+
+class Enrichment(Extraction):
+    """An extraction plus the provenance the pipeline records for it."""
+
     provider: str = Field(default="rule-based", description="Which enricher produced this.")
 
 
@@ -251,15 +280,120 @@ class RuleBasedEnricher:
         )
 
 
+# --- Claude ---------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Usage:
+    """Token accounting for one call, recorded so spend is measured not guessed."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+
+
+class ClaudeEnricher:
+    """Structured extraction via the Messages API.
+
+    Two properties matter here beyond "it returns JSON":
+
+    Prompt caching. The system prompt is byte-identical on every request and
+    carries a cache breakpoint, so after the first call its ~1.1k tokens are
+    read from cache at a fraction of the price. Nothing per-request is allowed
+    ahead of it in the prefix -- that is why the article goes in the user turn
+    rather than being interpolated into the system text.
+
+    Failure separation. A rate limit or a 5xx is transient, so it propagates and
+    the consumer's backoff handles it. An auth or request error would fail
+    identically for every article, so rather than dead-lettering the whole feed
+    it falls back to rule-based extraction and says so loudly -- and the
+    provider field records which path produced the row.
+    """
+
+    name = "claude"
+
+    # Bodies are capped before sending: extraction quality plateaus well before
+    # a full long-read, and input tokens are the bulk of the cost.
+    MAX_BODY_CHARS = 12_000
+
+    def __init__(self, model: str | None = None) -> None:
+        import anthropic
+
+        self._anthropic = anthropic
+        self._client = anthropic.Anthropic()
+        self.model = model or config.ANTHROPIC_MODEL
+        self._fallback = RuleBasedEnricher()
+        self.last_usage = Usage()
+
+    def enrich(self, title: str, body: str) -> Enrichment:
+        from pipeline.prompts import EXTRACTION_SYSTEM_PROMPT
+
+        article = f"{title}\n\n{body[: self.MAX_BODY_CHARS]}".strip()
+        if not article:
+            return self._fallback.enrich(title, body)
+
+        try:
+            response = self._client.messages.parse(
+                model=self.model,
+                max_tokens=config.ANTHROPIC_MAX_TOKENS,
+                system=[
+                    {
+                        "type": "text",
+                        "text": EXTRACTION_SYSTEM_PROMPT,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                messages=[{"role": "user", "content": article}],
+                output_config={"effort": "low"},
+                output_format=Extraction,
+            )
+        except (self._anthropic.RateLimitError, self._anthropic.APIConnectionError):
+            raise  # transient: let the consumer's backoff retry it
+        except self._anthropic.APIStatusError as exc:
+            if exc.status_code >= 500:
+                raise  # transient
+            log.error(
+                "enrichment request rejected (HTTP %s); falling back to rule-based: %s",
+                exc.status_code,
+                exc.message,
+            )
+            return self._fallback.enrich(title, body)
+
+        usage = response.usage
+        self.last_usage = Usage(
+            input_tokens=getattr(usage, "input_tokens", 0) or 0,
+            output_tokens=getattr(usage, "output_tokens", 0) or 0,
+            cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+            cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+        )
+
+        extraction = response.parsed_output
+        if extraction is None:
+            log.warning("model returned no parsed output; falling back to rule-based")
+            return self._fallback.enrich(title, body)
+
+        return Enrichment(**extraction.model_dump(), provider=self.name)
+
+
 def get_enricher() -> Enricher:
     """Pick an implementation once, at startup.
 
-    Step 14 adds the Claude branch here; until then the fallback is always
-    chosen, and the log line makes clear which one is running so nobody reads
-    rule-based output as model output.
+    The log line names the choice either way, so rule-based output is never
+    mistaken for model output. Construction failure is not fatal: a bad key
+    should degrade the feed, not stop it ingesting.
     """
     if not config.has_anthropic_credentials():
         log.warning(
             "no Anthropic credentials; using rule-based enrichment (set ANTHROPIC_API_KEY for model extraction)"
         )
-    return RuleBasedEnricher()
+        return RuleBasedEnricher()
+
+    try:
+        enricher = ClaudeEnricher()
+    except Exception:
+        log.exception("could not start Claude enrichment; falling back to rule-based")
+        return RuleBasedEnricher()
+
+    log.info("using Claude enrichment (model %s)", enricher.model)
+    return enricher

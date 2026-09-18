@@ -64,7 +64,13 @@ INDEX_TERM_COUNT = int(os.getenv("INDEX_TERM_COUNT", "24"))
 
 # --- Enrichment -----------------------------------------------------------
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5")
+# Sonnet rather than Opus: chosen for this workload, where extraction is
+# schema-bound and the cost difference matters across thousands of articles.
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+
+# Extraction output is bounded by the Enrichment schema, so a large ceiling
+# would only risk a runaway response.
+ANTHROPIC_MAX_TOKENS = int(os.getenv("ANTHROPIC_MAX_TOKENS", "2000"))
 
 
 def has_anthropic_credentials() -> bool:
