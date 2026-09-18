@@ -1,0 +1,48 @@
+# Feeds are chosen for deliberate overlap: world and business desks across
+# outlets carry the same wire stories, which is what gives SimHash clustering
+# something real to collapse. A set of non-overlapping niche feeds would make
+# the dedup rate look impressive and mean nothing.
+#
+# Verified returning parseable entries with both a date and body text.
+# yahoo-finance was dropped (no body), ap-top-news and cbs-business (empty).
+
+feeds:
+  # --- World ---
+  - name: bbc-world
+    url: https://feeds.bbci.co.uk/news/world/rss.xml
+  - name: guardian-world
+    url: https://www.theguardian.com/world/rss
+  - name: npr-news
+    url: https://feeds.npr.org/1001/rss.xml
+  - name: aljazeera
+    url: https://www.aljazeera.com/xml/rss/all.xml
+  - name: skynews-world
+    url: https://feeds.skynews.com/feeds/rss/world.xml
+  - name: cbs-world
+    url: https://www.cbsnews.com/latest/rss/world
+  - name: ft-world
+    url: https://www.ft.com/world?format=rss
+
+  # --- Business / markets ---
+  - name: bbc-business
+    url: https://feeds.bbci.co.uk/news/business/rss.xml
+  - name: guardian-business
+    url: https://www.theguardian.com/uk/business/rss
+  - name: npr-business
+    url: https://feeds.npr.org/1006/rss.xml
+  - name: cnbc-top
+    url: https://www.cnbc.com/id/100003114/device/rss/rss.html
+  - name: cnbc-business
+    url: https://www.cnbc.com/id/10001147/device/rss/rss.html
+  - name: skynews-business
+    url: https://feeds.skynews.com/feeds/rss/business.xml
+  - name: marketwatch
+    url: https://feeds.content.dowjones.io/public/rss/mw_topstories
+
+  # --- Technology ---
+  - name: arstechnica
+    url: https://feeds.arstechnica.com/arstechnica/index
+  - name: theverge
+    url: https://www.theverge.com/rss/index.xml
+  - name: techcrunch
+    url: https://techcrunch.com/feed/
