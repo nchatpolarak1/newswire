@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from typing import Any
 
 import redis
+import requests
 from flask import Flask, Response, jsonify, request
 from pipeline import config, db
 
@@ -30,6 +33,30 @@ MAX_LIMIT = 100
 # that caching them would evict more than it saves.
 FEED_CACHE_KEY = "cache:feed:{}"
 FEED_CACHE_TTL = 20
+
+STREAM_POLL_SECONDS = 3
+
+
+def _queue_depths() -> dict[str, Any]:
+    """Queue depths from the RabbitMQ management API.
+
+    Returns an error rather than raising: /api/stats must still answer when the
+    broker is unreachable, since the rest of its numbers come from Postgres.
+    """
+    try:
+        response = requests.get(
+            f"{config.RABBITMQ_MANAGEMENT_URL}/api/queues/%2F",
+            auth=(config.RABBITMQ_USER, config.RABBITMQ_PASSWORD),
+            timeout=3,
+        )
+        response.raise_for_status()
+        return {
+            q["name"]: {"messages": q.get("messages", 0), "consumers": q.get("consumers", 0)}
+            for q in response.json()
+            if q["name"].startswith("articles")
+        }
+    except Exception as exc:
+        return {"error": str(exc)[:120]}
 
 
 def _redis() -> redis.Redis:
@@ -94,6 +121,67 @@ def create_app() -> Flask:
         if found is None:
             return jsonify({"error": "cluster not found", "cluster_id": cluster_id}), 404
         return jsonify(found)
+
+    @app.get("/api/stats")
+    def stats() -> Response:
+        """Pipeline metrics, derived from recorded events rather than estimated."""
+        window = request.args.get("window_minutes", type=int) or 60
+        with db.connection() as conn:
+            payload = db.fetch_stats(conn, window_minutes=max(1, min(window, 1440)))
+
+        # Queue depth comes from the broker's management API, not from a
+        # passive queue declare: the declare's count lags on the publishing
+        # channel and reads low exactly when the queue is backing up.
+        payload["queue"] = _queue_depths()
+        return jsonify(payload)
+
+    @app.get("/api/stream")
+    def stream() -> Response:
+        """Server-sent events: new stories as the pipeline produces them.
+
+        SSE rather than websockets because the traffic is one-directional and
+        every browser reconnects automatically on drop. Polling on the server
+        side keeps the client dumb; the cost is one cheap indexed query per
+        tick, against a connection the client already holds open.
+        """
+        with db.connection() as conn:
+            start_id = db.latest_article_id(conn)
+
+        def events():
+            last_id = start_id
+            # Told up front, so a reconnecting client resumes rather than
+            # replaying the whole feed.
+            yield f"event: hello\ndata: {json.dumps({'since_id': last_id})}\n\n"
+
+            idle_ticks = 0
+            while True:
+                with db.connection() as conn:
+                    fresh = db.fetch_stories_since(conn, last_id)
+
+                for story in fresh:
+                    last_id = max(last_id, story["id"])
+                    yield f"event: story\ndata: {json.dumps(story)}\n\n"
+
+                if fresh:
+                    idle_ticks = 0
+                else:
+                    idle_ticks += 1
+                    # A comment frame keeps proxies from closing an idle
+                    # connection, and costs nothing to the client.
+                    if idle_ticks % 5 == 0:
+                        yield ": keepalive\n\n"
+
+                time.sleep(STREAM_POLL_SECONDS)
+
+        return Response(
+            events(),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",  # stops nginx-style proxies buffering the stream
+                "Connection": "keep-alive",
+            },
+        )
 
     @app.errorhandler(Exception)
     def on_error(exc: Exception) -> Response:

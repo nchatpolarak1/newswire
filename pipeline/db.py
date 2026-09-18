@@ -307,3 +307,108 @@ def fetch_cluster(conn: psycopg.Connection, cluster_id: int) -> Optional[dict[st
             for m in members
         ],
     }
+
+
+def fetch_stats(conn: psycopg.Connection, window_minutes: int = 60) -> dict[str, Any]:
+    """Pipeline metrics, read from the events table rather than estimated.
+
+    Everything here is derived from rows the pipeline wrote as it ran, which is
+    what makes the README's numbers defensible. Latency percentiles use
+    percentile_disc so the value returned is one that actually occurred.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        totals = cur.execute(
+            """
+            SELECT
+              (SELECT count(*) FROM articles)                              AS articles,
+              (SELECT count(*) FROM clusters)                              AS clusters,
+              (SELECT count(*) FROM articles WHERE enrichment IS NOT NULL) AS enriched,
+              (SELECT count(*) FROM articles WHERE cluster_id IS NOT NULL) AS clustered,
+              (SELECT count(DISTINCT source) FROM articles WHERE source <> '') AS sources
+            """
+        ).fetchone()
+
+        throughput = cur.execute(
+            """
+            SELECT count(*) AS ingested_in_window
+            FROM pipeline_events
+            WHERE stage = 'ingest' AND ts > now() - make_interval(mins => %s)
+            """,
+            (window_minutes,),
+        ).fetchone()
+
+        latency = cur.execute(
+            """
+            SELECT stage,
+                   count(*)                                                        AS calls,
+                   percentile_disc(0.5) WITHIN GROUP (ORDER BY latency_ms)         AS p50,
+                   percentile_disc(0.95) WITHIN GROUP (ORDER BY latency_ms)        AS p95
+            FROM pipeline_events
+            WHERE latency_ms IS NOT NULL
+            GROUP BY stage ORDER BY stage
+            """
+        ).fetchall()
+
+        spend = cur.execute(
+            """
+            SELECT coalesce(sum(tokens_in), 0)         AS tokens_in,
+                   coalesce(sum(tokens_out), 0)        AS tokens_out,
+                   coalesce(sum(cache_read_tokens), 0) AS cache_read_tokens,
+                   count(*)                            AS calls,
+                   count(*) FILTER (WHERE cache_read_tokens > 0) AS cached_calls
+            FROM pipeline_events WHERE stage = 'enrich'
+            """
+        ).fetchone()
+
+        failures = cur.execute(
+            """
+            SELECT stage, count(*) AS n FROM pipeline_events
+            WHERE stage IN ('enrich_failed', 'duplicate') GROUP BY stage
+            """
+        ).fetchall()
+
+        distribution = cur.execute(
+            "SELECT member_count AS size, count(*) AS clusters FROM clusters GROUP BY 1 ORDER BY 1"
+        ).fetchall()
+
+    articles = totals["articles"] or 0
+    clusters = totals["clusters"] or 0
+    return {
+        "totals": dict(totals),
+        "throughput": {
+            "window_minutes": window_minutes,
+            "ingested": throughput["ingested_in_window"],
+            "per_hour": round(throughput["ingested_in_window"] * 60 / window_minutes, 1),
+        },
+        # Share of articles absorbed into an existing story rather than opening
+        # one. Meaningless without the corpus size, so it travels with it.
+        "dedup": {
+            "articles": articles,
+            "clusters": clusters,
+            "collapsed": max(articles - clusters, 0),
+            "rate_pct": round(100.0 * (articles - clusters) / articles, 1) if articles else 0.0,
+        },
+        "latency_ms": {r["stage"]: {"calls": r["calls"], "p50": r["p50"], "p95": r["p95"]} for r in latency},
+        "spend": dict(spend),
+        "failures": {r["stage"]: r["n"] for r in failures},
+        "cluster_sizes": {str(r["size"]): r["clusters"] for r in distribution},
+    }
+
+
+def latest_article_id(conn: psycopg.Connection) -> int:
+    row = conn.execute("SELECT coalesce(max(id), 0) FROM articles").fetchone()
+    return int(row[0]) if row else 0
+
+
+def fetch_stories_since(conn: psycopg.Connection, since_id: int, limit: int = 20) -> list[dict[str, Any]]:
+    """Stories whose canonical article is newer than `since_id`, oldest first.
+
+    Used by the SSE stream. Keyed on article id rather than a timestamp because
+    ids are monotonic under concurrent writers, where published_at is not.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        rows = cur.execute(
+            _FEED_SELECT + " WHERE a.id > %(since_id)s ORDER BY a.id ASC LIMIT %(limit)s",
+            {"since_id": since_id, "limit": limit},
+        ).fetchall()
+    return [_row_to_story(r) for r in rows]
