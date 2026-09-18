@@ -23,6 +23,18 @@ log = logging.getLogger(__name__)
 # why it landed there rather than just that it did.
 RETRY_HEADER = "x-retry-count"
 
+# Backoff tiers. A retry queue holds the message for its TTL and then
+# dead-letters it back to the news exchange, so the wait costs no consumer
+# time -- the broker does the waiting. One queue per tier rather than
+# per-message TTL, which expires strictly in publish order and would let a
+# long delay at the head block shorter ones behind it.
+RETRY_DELAYS_MS = (2_000, 8_000, 32_000)
+RETRY_QUEUE = "articles.retry.{}"
+
+# Dead-lettering preserves the original routing key, which for a retry queue
+# would be the queue name and would not match article.raw.#. Pin it instead.
+RETRY_RETURN_KEY = "article.raw.retry"
+
 
 def connection_params() -> pika.ConnectionParameters:
     params = pika.URLParameters(config.RABBITMQ_URL)
@@ -67,6 +79,17 @@ def declare_topology(ch: BlockingChannel) -> None:
     )
     ch.queue_bind(config.RAW_QUEUE, config.EXCHANGE, routing_key=config.RAW_ROUTING_PATTERN)
 
+    for tier, delay_ms in enumerate(RETRY_DELAYS_MS, start=1):
+        ch.queue_declare(
+            RETRY_QUEUE.format(tier),
+            durable=True,
+            arguments={
+                "x-message-ttl": delay_ms,
+                "x-dead-letter-exchange": config.EXCHANGE,
+                "x-dead-letter-routing-key": RETRY_RETURN_KEY,
+            },
+        )
+
 
 def publish(ch: BlockingChannel, routing_key: str, payload: dict[str, Any]) -> None:
     """Publish a durable JSON message to the news exchange."""
@@ -90,16 +113,23 @@ def retry_count(properties: pika.BasicProperties) -> int:
         return 0
 
 
-def republish_for_retry(ch: BlockingChannel, routing_key: str, body: bytes, attempts: int) -> None:
-    """Put a failed message back with an incremented retry counter.
+def schedule_retry(ch: BlockingChannel, body: bytes, attempts: int) -> int:
+    """Park a failed message in the retry queue for its backoff tier.
 
-    Re-publishing rather than nack(requeue=True) is deliberate: requeue puts the
-    message back at the head of the queue with no counter, so a poison message
-    spins forever. This way the budget is carried on the message itself.
+    Re-publishing rather than nack(requeue=True) is deliberate: requeue returns
+    the message to the head of the queue carrying no counter, so a poison
+    message spins forever. Here the budget rides on the message and the broker
+    holds it for the delay, so waiting costs no consumer capacity.
+
+    Returns the delay in milliseconds that was applied.
     """
+    tier = min(attempts, len(RETRY_DELAYS_MS))
+    delay_ms = RETRY_DELAYS_MS[tier - 1]
+
+    # The default exchange routes by queue name, straight to that one queue.
     ch.basic_publish(
-        exchange=config.EXCHANGE,
-        routing_key=routing_key,
+        exchange="",
+        routing_key=RETRY_QUEUE.format(tier),
         body=body,
         properties=pika.BasicProperties(
             content_type="application/json",
@@ -107,6 +137,7 @@ def republish_for_retry(ch: BlockingChannel, routing_key: str, body: bytes, atte
             headers={RETRY_HEADER: attempts},
         ),
     )
+    return delay_ms
 
 
 def queue_depth(ch: BlockingChannel, queue: Optional[str] = None) -> int:

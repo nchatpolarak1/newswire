@@ -66,8 +66,14 @@ def _dispatch(
             ch.basic_nack(method.delivery_tag, requeue=False)
             return
 
-        log.warning("attempt %d/%d failed, republishing: %s", attempts + 1, config.MAX_RETRIES, exc)
-        queue.republish_for_retry(ch, method.routing_key, body, attempts + 1)
+        delay_ms = queue.schedule_retry(ch, body, attempts + 1)
+        log.warning(
+            "attempt %d/%d failed, retrying in %.0fs: %s",
+            attempts + 1,
+            config.MAX_RETRIES,
+            delay_ms / 1000,
+            exc,
+        )
         # Ack the original only after the replacement is published; if the
         # publish fails we fall through unacked and the broker redelivers.
         ch.basic_ack(method.delivery_tag)
