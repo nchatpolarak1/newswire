@@ -16,6 +16,9 @@ export default function Navbar() {
                                 <Link href="/"><span className="menu-item" aria-current="page">Feed</span></Link>
                             </li>
                             <li>
+                                <Link href="/pipeline"><span className="menu-item">Pipeline</span></Link>
+                            </li>
+                            <li>
                                 <p id="nav-divider">|</p>
                             </li>
                             <li>

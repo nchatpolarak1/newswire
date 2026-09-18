@@ -90,7 +90,9 @@
 
 /* NEWS */
 .nav-div {
-  @apply bg-primary w-screen flex flex-wrap flex-col gap-4 items-center justify-between mx-auto pt-8 dark:bg-[color:--nav-color]
+  /* w-full, not w-screen: 100vw includes the scrollbar width and forces a
+     horizontal scrollbar on every page. */
+  @apply bg-primary w-full flex flex-wrap flex-col gap-4 items-center justify-between mx-auto pt-8
 }
 
 .navbar-navigation-wrapper {
@@ -129,4 +131,30 @@
 body {
   font-family: "Inter", sans-serif;
   @apply bg-background
+}
+
+/* --- Dashboard tokens -----------------------------------------------------
+   Validated with the dataviz palette validator. The chart uses ONE hue
+   (sequential blue), so there are no adjacent-pair CVD concerns; status
+   colours are badges that always carry a text label, never colour alone, and
+   are held to WCAG text contrast (>= 4.5:1) rather than the categorical gate.
+
+   Light only, deliberately. These tokens previously had a
+   prefers-color-scheme: dark block, which fired on an OS dark setting and set
+   --viz-ink to white -- on a page whose background is a hardcoded #ffffff from
+   tailwind.config.ts. The stat tiles survived because they paint their own
+   surface; every table went white-on-white. Dark steps are validated and ready
+   in git history, but they only make sense once the whole app has a dark mode,
+   not for one page inside a light one. */
+.viz-root {
+  color-scheme: light;
+  --viz-surface:   #fcfcfb;
+  --viz-border:    #e2e1dd;
+  --viz-ink:       #0b0b0b;
+  --viz-secondary: #52514e;
+  --viz-muted:     #7a7975;
+  --viz-series-1:  #2a78d6;   /* sequential blue, 4.06:1 on surface */
+  --stat-good:     #0f7a52;   /* 5.21:1 */
+  --stat-warn:     #8a5a00;   /* 5.77:1 */
+  --stat-bad:      #b02424;   /* 6.55:1 */
 }
