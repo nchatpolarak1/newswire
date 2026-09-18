@@ -8,7 +8,8 @@ import sys
 import time
 from typing import Any
 
-from pipeline import config, db, fulltext
+import redis
+from pipeline import clustering, config, db, fulltext
 
 from services.enricher.consumer import PermanentError, consume
 
@@ -24,6 +25,15 @@ log = logging.getLogger(__name__)
 REQUIRED_FIELDS = ("url", "title", "body")
 
 _running = True
+_redis_client: redis.Redis | None = None
+
+
+def _redis() -> redis.Redis:
+    """Lazily opened Redis connection, reused for the life of the process."""
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.Redis.from_url(config.REDIS_URL)
+    return _redis_client
 
 
 def _stop(signum: int, _frame: Any) -> None:
@@ -82,13 +92,49 @@ def handle_article(payload: dict[str, Any]) -> None:
             detail=f"{record['source']}:{body_source}",
         )
 
-    log.info(
-        "stored [%s] %s (%s, %d ch)",
-        record["source"],
-        record["title"][:60],
-        body_source,
-        len(body),
-    )
+        # Clustering runs inside the same transaction as the insert, so an
+        # article is never visible without a cluster, and a crash between the
+        # two leaves nothing half-written for the redelivery to trip over.
+        clustered = time.monotonic()
+        assignment = clustering.assign(_redis(), article_id, record["title"], body)
+
+        if assignment.matched_article_id is not None:
+            cluster_id = db.join_cluster(conn, article_id, assignment.matched_article_id)
+            db.record_event(
+                conn,
+                "cluster_join",
+                article_id=article_id,
+                latency_ms=int((time.monotonic() - clustered) * 1000),
+                detail=f"{cluster_id}:{assignment.score:.3f}:{assignment.candidates_examined}",
+            )
+        else:
+            cluster_id = db.create_cluster(conn, article_id)
+            db.record_event(
+                conn,
+                "cluster_new",
+                article_id=article_id,
+                latency_ms=int((time.monotonic() - clustered) * 1000),
+                detail=f"{cluster_id}:{assignment.candidates_examined}",
+            )
+
+    if assignment.matched_article_id is not None:
+        log.info(
+            "clustered [%s] %s -> cluster %d (cos %.2f, %d candidates)",
+            record["source"],
+            record["title"][:50],
+            cluster_id,
+            assignment.score,
+            assignment.candidates_examined,
+        )
+    else:
+        log.info(
+            "stored [%s] %s (%s, %d ch, %d candidates)",
+            record["source"],
+            record["title"][:50],
+            body_source,
+            len(body),
+            assignment.candidates_examined,
+        )
 
 
 def main() -> int:

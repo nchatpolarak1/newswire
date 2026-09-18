@@ -91,23 +91,6 @@ def url_hash(url: str) -> str:
     return hashlib.sha256(normalize_url(url).encode("utf-8")).hexdigest()
 
 
-# --- SimHash storage ------------------------------------------------------
-# Postgres BIGINT is signed; SimHash is an unsigned 64-bit value. Round-trip
-# through two's complement rather than losing the top bit.
-
-_SIGN_BIT = 1 << 63
-_MASK_64 = (1 << 64) - 1
-
-
-def to_signed_64(value: int) -> int:
-    value &= _MASK_64
-    return value - (1 << 64) if value & _SIGN_BIT else value
-
-
-def from_signed_64(value: int) -> int:
-    return value & _MASK_64
-
-
 # --- Writes ---------------------------------------------------------------
 
 
@@ -167,3 +150,46 @@ def parse_timestamp(value: str | None) -> Optional[datetime]:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+# --- Clustering -----------------------------------------------------------
+
+
+def create_cluster(conn: psycopg.Connection, article_id: int) -> int:
+    """Start a new cluster with this article as its canonical member."""
+    row = conn.execute(
+        """
+        INSERT INTO clusters (canonical_article_id, first_seen, last_seen)
+        VALUES (%s, now(), now())
+        RETURNING id
+        """,
+        (article_id,),
+    ).fetchone()
+    cluster_id = int(row[0])
+    conn.execute("UPDATE articles SET cluster_id = %s WHERE id = %s", (cluster_id, article_id))
+    return cluster_id
+
+
+def join_cluster(conn: psycopg.Connection, article_id: int, matched_article_id: int) -> int:
+    """Attach an article to the cluster of the article it matched.
+
+    The matched article may itself be unclustered if a replica is mid-flight,
+    so its cluster is created on demand. The UPDATE ... RETURNING keeps the
+    member count consistent under concurrent writers by letting Postgres
+    serialise the increment rather than reading then writing.
+    """
+    row = conn.execute("SELECT cluster_id FROM articles WHERE id = %s", (matched_article_id,)).fetchone()
+    cluster_id = row[0] if row else None
+
+    if cluster_id is None:
+        cluster_id = create_cluster(conn, matched_article_id)
+
+    conn.execute(
+        """
+        UPDATE clusters SET member_count = member_count + 1, last_seen = now()
+        WHERE id = %s
+        """,
+        (cluster_id,),
+    )
+    conn.execute("UPDATE articles SET cluster_id = %s WHERE id = %s", (cluster_id, article_id))
+    return int(cluster_id)

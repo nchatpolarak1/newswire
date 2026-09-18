@@ -21,9 +21,6 @@ CREATE TABLE IF NOT EXISTS articles (
     image_url    TEXT        NOT NULL DEFAULT '',
     published_at TIMESTAMPTZ,
     fetched_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- Stored signed: Postgres BIGINT has no unsigned variant, so the 64-bit
-    -- SimHash is mapped through a signed round-trip in pipeline.db.
-    simhash      BIGINT,
     cluster_id   BIGINT REFERENCES clusters(id) ON DELETE SET NULL,
     enrichment   JSONB,
     enriched_at  TIMESTAMPTZ
@@ -62,3 +59,7 @@ BEGIN
             FOREIGN KEY (canonical_article_id) REFERENCES articles(id) ON DELETE SET NULL;
     END IF;
 END $$;
+
+-- Dropped when clustering moved from SimHash to TF-IDF: similarity is now a
+-- sparse vector held in Redis, not a single integer on the row.
+ALTER TABLE articles DROP COLUMN IF EXISTS simhash;
