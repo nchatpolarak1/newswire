@@ -80,6 +80,25 @@ services:
     # No container_name and no host port binding, so `--scale enricher=N`
     # works without collisions.
 
+  api:
+    build: .
+    command: >
+      gunicorn --bind 0.0.0.0:8000 --workers 2 --threads 4
+      --access-logfile - --error-logfile - services.api.app:app
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+    environment: *pipeline_env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
 volumes:
   rabbitmq_data:
   postgres_data:

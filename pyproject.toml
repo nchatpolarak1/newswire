@@ -18,6 +18,7 @@ dependencies = [
     "requests",
     "pydantic",
     "flask",
+    "gunicorn",        # production WSGI server for the API
     "anthropic",
     "pyyaml",
 ]
