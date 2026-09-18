@@ -97,7 +97,7 @@ posted to Redis sets, so a new article's candidates are the union of postings
 for *its* top terms rather than a scan of everything stored. Cosine runs only
 against those candidates; the best above threshold joins that cluster.
 
-Measured: **median 16 candidates examined, p95 40**, against 397 for a full scan.
+Measured: **median 17 candidates examined, p95 42**, against 398 for a full scan.
 
 > **This was originally SimHash, and SimHash does not work for this problem.**
 > Over 393 real articles it produced *zero* pairs within Hamming distance 12,
@@ -169,19 +169,22 @@ access; none of them are worked around.
 
 ## What doesn't work well
 
-**The dedup rate is 8.1%, not 30%.** The original plan guessed 30% with nothing
+**The dedup rate is 8.8%, not 30%.** The original plan guessed 30% with nothing
 behind it. The real figure depends heavily on corpus size — IDF needs a corpus
 before rare terms look rare — and climbs as the feed accumulates. Any published
-rate is meaningless without the corpus size attached.
+rate is meaningless without the corpus size attached, which is why the measured
+results below always state it.
 
-**Roughly 4 of 17 multi-article clusters are topical, not same-story.** Four CBS
-Iran pieces merged on shared vocabulary; a podcast episode listing paired with a
-real story. Raising the threshold to 0.40 cuts most of these but also drops
-genuine members. Left at 0.35 pending more data.
+**7 of 22 multi-article clusters contain only one outlet**, which is where
+topical merges concentrate — four CBS pieces on Iran merged on shared
+vocabulary, being the same subject rather than the same story. Raising the
+threshold to 0.40 cuts most of these but also drops genuine members. Left at
+0.35 pending more data.
 
 **41% of articles are teaser-only.** Eight sources return HTTP 403/401 to any
-identified crawler and one is JS-rendered. Those articles carry ~300 characters
-instead of ~5,000, which weakens both clustering and extraction for them.
+identified crawler and one is JS-rendered. Those articles carry ~313 characters
+against ~4,833 for a full body, which weakens both clustering and extraction for
+them.
 
 **The SSE stream polls Postgres every 3 seconds per connected client.** Adequate
 for a demo; `LISTEN/NOTIFY` or a Redis pub/sub fan-out would be needed for real
@@ -191,6 +194,74 @@ concurrency.
 enrichment logic — the parts where correctness is subtle. Queue semantics,
 idempotency and the DLQ were verified by hand against live infrastructure and
 are documented in the commit history, not automated.
+
+---
+
+## Measured results
+
+One clean run — `docker compose down -v && docker compose up --scale enricher=4`
+— on 2026-09-18, 17 feeds, Claude Sonnet 5. Every figure is read from the
+`pipeline_events` table the pipeline wrote as it ran.
+
+| | |
+|---|---|
+| Articles ingested | 398 from 17 sources |
+| Stories after clustering | 363 |
+| Collapsed into an existing story | 35 (**8.8%**) |
+| Enrichment calls | 363 — one per story, not per article |
+| Failures | 0 |
+
+**Throughput.** The cold backfill drained **388 articles in 6.2 minutes — about
+3,750/hr** with four enricher replicas. After that, only 10 new articles arrived
+across the next two poll cycles (~28 minutes). That gap is the honest headline:
+*the pipeline is roughly two orders of magnitude faster than the news arrives.*
+It is latency-bound by the 10-minute poll interval, not throughput-bound, and
+four replicas are over-provisioned for 17 feeds.
+
+**Latency** (p50 / p95):
+
+| Stage | Calls | p50 | p95 |
+|---|---:|---:|---:|
+| Ingest (incl. full-text fetch) | 398 | 120ms | 364ms |
+| Cluster — new | 363 | 6ms | 13ms |
+| Cluster — join | 35 | 6ms | 21ms |
+| Enrich (model call) | 363 | 3,819ms | 6,194ms |
+
+Enrichment is ~32x the next slowest stage, which is why it is the only thing
+worth scaling and why it runs outside the database transaction.
+
+**Cost.** $2.09 for the run — **$0.0053 per article**. The same work without
+prompt caching would have been $3.80, so caching saved **45%**. 355 of 363 calls
+read the prefix from cache; the 8 misses are one cache write per replica.
+
+**Index efficiency.** Clustering examined a **median of 17 candidate articles
+(p95 42, max 63)** instead of comparing against all 398 — the inverted index
+doing its job.
+
+**Full text.** 233 of 398 articles (59%) yielded real article bodies, averaging
+4,833 characters. The other 165 fell back to feed teasers averaging 313
+characters, because those sources refuse identified crawlers.
+
+### Cluster quality
+
+Counting clusters rather than trusting the percentage. Of 22 multi-article
+clusters, **15 span more than one outlet** and 7 contain articles from a single
+outlet — those are where topical merges concentrate, so treat 68% as a rough
+precision floor.
+
+The good ones are unambiguous:
+
+| Story | Outlets |
+|---|---|
+| Trump bans CNN, MS NOW and Politico from the White House | Al Jazeera, CNBC, FT, Guardian, NPR |
+| Warren Buffett steps down as Berkshire chairman | Al Jazeera, CNBC, FT, Guardian, NPR |
+| Canada and the EU discuss associate membership | BBC x2, CBS, Guardian |
+| New wild cat species identified in Bolivia | Al Jazeera, CBS, Guardian, Sky News |
+
+And the known failure, unchanged from earlier runs: four CBS pieces on Iran —
+war crimes findings, the Strait of Hormuz, Yemen oil, a House speaker quote —
+merged into one cluster on shared vocabulary. They are the same *subject*, not
+the same *story*.
 
 ---
 
