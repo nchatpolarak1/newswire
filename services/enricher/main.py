@@ -8,7 +8,7 @@ import sys
 import time
 from typing import Any
 
-from pipeline import db
+from pipeline import config, db, fulltext
 
 from services.enricher.consumer import PermanentError, consume
 
@@ -43,11 +43,21 @@ def handle_article(payload: dict[str, Any]) -> None:
         raise PermanentError(f"missing required fields: {', '.join(missing)}")
 
     started = time.monotonic()
+
+    # Feeds mostly carry a one-sentence teaser. Clustering and entity
+    # extraction both need real prose, so pull the body from the page; a
+    # blocked or unreachable site degrades to the teaser rather than failing.
+    body = payload["body"]
+    body_source = "teaser"
+    if config.FULLTEXT_ENABLED:
+        result = fulltext.fetch_body(payload["url"], payload["body"])
+        body, body_source = result.body, result.source
+
     record = {
         "url_hash": db.url_hash(payload["url"]),
         "url": payload["url"],
         "title": payload["title"],
-        "body": payload["body"],
+        "body": body,
         "author": payload.get("author") or "",
         "source": payload.get("source") or "",
         "image_url": payload.get("image_url") or "",
@@ -69,10 +79,16 @@ def handle_article(payload: dict[str, Any]) -> None:
             "ingest",
             article_id=article_id,
             latency_ms=int((time.monotonic() - started) * 1000),
-            detail=record["source"],
+            detail=f"{record['source']}:{body_source}",
         )
 
-    log.info("stored [%s] %s", record["source"], record["title"][:70])
+    log.info(
+        "stored [%s] %s (%s, %d ch)",
+        record["source"],
+        record["title"][:60],
+        body_source,
+        len(body),
+    )
 
 
 def main() -> int:

@@ -67,3 +67,8 @@ def has_anthropic_credentials() -> bool:
     pipeline still runs end to end.
     """
     return bool(ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_AUTH_TOKEN"))
+
+
+# --- Full-text fetching ---
+FULLTEXT_TIMEOUT_SECONDS = int(os.getenv("FULLTEXT_TIMEOUT_SECONDS", "12"))
+FULLTEXT_ENABLED = os.getenv("FULLTEXT_ENABLED", "1") != "0"
