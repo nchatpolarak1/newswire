@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from pipeline import config
 
@@ -34,6 +34,11 @@ class Entity(BaseModel):
     sentiment: Sentiment = "neutral"
 
 
+MAX_TOPICS_OUT = 4
+MAX_ENTITIES_OUT = 12
+MAX_TICKERS_OUT = 8
+
+
 class Extraction(BaseModel):
     """What an enricher derives from an article.
 
@@ -41,26 +46,28 @@ class Extraction(BaseModel):
     field descriptions below are prompt surface, not just documentation. It
     deliberately excludes provenance: the model is never asked for metadata it
     cannot know.
+
+    List caps truncate rather than reject. Enforcing them with `max_length`
+    discarded 12 of 363 extractions in a live run -- the model returned 13 or 14
+    entities and Pydantic threw away the whole result, summary and all, over one
+    surplus entity. The cap expresses intent to the model; the client tolerates
+    overshoot rather than losing the work.
     """
 
     summary: str = Field(
         default="",
-        max_length=600,
         description="Two sentences of plain prose describing what happened. No preamble.",
     )
     topics: list[str] = Field(
         default_factory=list,
-        max_length=4,
         description="Up to four lowercase topic labels, most relevant first.",
     )
     entities: list[Entity] = Field(
         default_factory=list,
-        max_length=12,
         description="People, organisations and places the article is actually about.",
     )
     tickers: list[str] = Field(
         default_factory=list,
-        max_length=8,
         description="Stock tickers only where the company is confidently identifiable.",
     )
     importance: int = Field(
@@ -69,6 +76,26 @@ class Extraction(BaseModel):
         le=5,
         description="1 routine, 3 notable, 5 major news of the day.",
     )
+
+    @field_validator("summary")
+    @classmethod
+    def _cap_summary(cls, value: str) -> str:
+        return value[:600]
+
+    @field_validator("topics")
+    @classmethod
+    def _cap_topics(cls, value: list[str]) -> list[str]:
+        return value[:MAX_TOPICS_OUT]
+
+    @field_validator("entities")
+    @classmethod
+    def _cap_entities(cls, value: list[Entity]) -> list[Entity]:
+        return value[:MAX_ENTITIES_OUT]
+
+    @field_validator("tickers")
+    @classmethod
+    def _cap_tickers(cls, value: list[str]) -> list[str]:
+        return value[:MAX_TICKERS_OUT]
 
 
 class Enrichment(Extraction):

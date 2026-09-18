@@ -146,3 +146,37 @@ def test_enrich_returns_valid_model_on_empty_input(enricher):
 def test_enrich_is_deterministic(enricher):
     body = "The central bank raised interest rates. Inflation remains above target."
     assert enricher.enrich("Rates", body) == enricher.enrich("Rates", body)
+
+
+# --- output caps ----------------------------------------------------------
+
+
+def test_oversized_lists_truncate_rather_than_reject():
+    """Regression: 12 of 363 live extractions were discarded whole.
+
+    The model returned 13-14 entities against a max_length of 12, so Pydantic
+    rejected the entire result -- summary, topics and all -- over one surplus
+    entity. Caps now trim.
+    """
+    extraction = enrich.Extraction(
+        summary="s" * 900,
+        topics=[f"t{i}" for i in range(9)],
+        entities=[enrich.Entity(name=f"e{i}") for i in range(20)],
+        tickers=[f"T{i}" for i in range(15)],
+    )
+    assert len(extraction.summary) == 600
+    assert len(extraction.topics) == enrich.MAX_TOPICS_OUT
+    assert len(extraction.entities) == enrich.MAX_ENTITIES_OUT
+    assert len(extraction.tickers) == enrich.MAX_TICKERS_OUT
+
+
+def test_truncation_keeps_the_most_relevant_first():
+    """Order is meaningful -- the model is told to rank, so trim from the tail."""
+    extraction = enrich.Extraction(entities=[enrich.Entity(name=f"e{i}") for i in range(20)])
+    assert extraction.entities[0].name == "e0"
+
+
+def test_importance_is_still_rejected_out_of_range():
+    """Caps trim; genuinely invalid values must still fail loudly."""
+    with pytest.raises(ValidationError):
+        enrich.Extraction(importance=9)
