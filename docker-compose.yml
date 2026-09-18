@@ -50,6 +50,36 @@ services:
     volumes:
       - redis_data:/data
 
+  # --- Pipeline -------------------------------------------------------------
+  # Both wait for healthy infrastructure: RabbitMQ needs ~25s to accept
+  # connections, and starting without it would crash-loop on first boot.
+
+  poller:
+    build: .
+    command: python -m services.poller.main
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+    environment: &pipeline_env
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
+      POSTGRES_HOST: postgres
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-600}
+    restart: unless-stopped
+
+  enricher:
+    build: .
+    command: python -m services.enricher.main
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+      redis:    {condition: service_healthy}
+      postgres: {condition: service_healthy}
+    environment: *pipeline_env
+    restart: unless-stopped
+    # No container_name and no host port binding, so `--scale enricher=N`
+    # works without collisions.
+
 volumes:
   rabbitmq_data:
   postgres_data:
