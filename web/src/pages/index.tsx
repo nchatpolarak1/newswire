@@ -5,6 +5,8 @@ import NewsCard from "@/components/NewsCard";
 import NewsFeed from "@/components/NewsFeed";
 import { FeedResponse, Story } from "@/utils/types";
 
+const SIDEBAR_COUNT = 6;
+
 export default function Feed() {
     const [stories, setStories] = useState<Story[]>([]);
     const [cursor, setCursor] = useState<string | null>(null);
@@ -98,6 +100,11 @@ export default function Feed() {
     }
 
     const [featured, ...rest] = stories;
+    // The sidebar holds a fixed handful; the main grid takes everything else so
+    // that loading another page actually shows up. Slicing both to fixed
+    // windows meant the button fetched correctly and changed nothing on screen.
+    const sidebar = rest.slice(0, SIDEBAR_COUNT);
+    const mainFeed = rest.slice(SIDEBAR_COUNT);
 
     return (
         <div>
@@ -110,10 +117,10 @@ export default function Feed() {
             <div className="grid grid-cols-4 space-x-2 space-y-2 pt-2">
                 <div className="col-span-4 lg:col-span-3">
                     <FeaturedNewsCard story={featured} />
-                    <NewsFeed stories={rest.slice(0, 12)} />
+                    <NewsFeed stories={mainFeed} />
 
-                    {cursor && (
-                        <div className="flex justify-center py-4">
+                    <div className="flex flex-col items-center gap-1 py-4">
+                        {cursor ? (
                             <button
                                 onClick={loadMore}
                                 disabled={loadingMore}
@@ -121,13 +128,18 @@ export default function Feed() {
                             >
                                 {loadingMore ? "Loading…" : "Load more stories"}
                             </button>
-                        </div>
-                    )}
+                        ) : (
+                            <span className="text-sm text-slate-500">No more stories</span>
+                        )}
+                        <span className="text-xs text-slate-500">
+                            showing {stories.length} {stories.length === 1 ? "story" : "stories"}
+                        </span>
+                    </div>
                 </div>
 
                 <aside className="hidden overflow-hidden border-l border-slate-300 lg:col-span-1 lg:block">
                     <div className="flex flex-col gap-4 space-x-2 divide-y divide-slate-300">
-                        {rest.slice(12, 18).map((story) => (
+                        {sidebar.map((story) => (
                             <NewsCard key={story.cluster_id} story={story} compact />
                         ))}
                     </div>
