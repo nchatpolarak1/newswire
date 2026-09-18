@@ -1,18 +1,18 @@
 import NewsCard from "@/components/NewsCard";
-import { Article } from "@/utils/types";
+import { Story } from "@/utils/types";
 
 interface NewsFeedProps {
-    articles: Article[];
+    stories: Story[];
 }
 
-function NewsFeed({ articles }: NewsFeedProps) {
-    if (articles.length === 0) return null;
+function NewsFeed({ stories }: NewsFeedProps) {
+    if (stories.length === 0) return null;
 
     return (
         <div className="stories-container">
             <div className="stories-grid">
-                {articles.map((article) => (
-                    <NewsCard key={article.url} article={article} />
+                {stories.map((story) => (
+                    <NewsCard key={story.cluster_id} story={story} />
                 ))}
             </div>
         </div>

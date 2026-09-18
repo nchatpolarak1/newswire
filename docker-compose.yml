@@ -99,6 +99,27 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  web:
+    build:
+      context: ./web
+    command: npm run dev
+    ports:
+      - "3000:3000"
+    depends_on:
+      api: {condition: service_healthy}
+    environment:
+      # Server-side only: the browser talks to the Next origin, never directly
+      # to the API, so the backend host never leaves the compose network.
+      BACKEND_API_URL: http://api:8000
+    volumes:
+      # Bind the source so `npm run dev` hot-reloads instead of needing an
+      # image rebuild per edit. The anonymous volume keeps the image's
+      # node_modules, which are built for the container's platform.
+      - ./web:/app
+      - /app/node_modules
+      - /app/.next
+    restart: unless-stopped
+
 volumes:
   rabbitmq_data:
   postgres_data:
